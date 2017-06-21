@@ -31,13 +31,17 @@ func sessionKeyFromDHKey(dhKey []byte) ([]byte, error) {
 	}
 
 	// If the most significant bit is 1, we prepend a 0x00 byte
+	// Note: the append here is acceptable as the main slice is created on the spot ([]byte{0x00})
+	// and the assignement doesn't change the underlying array
 	if dhKey[0]&0x80 != 0 {
 		dhKey = append([]byte{0x00}, dhKey...)
 	}
 
 	// If the byte array length is more than or equal to 32 bytes, we slice it to 32 bytes
 	if len(dhKey) >= 32 {
-		return dhKey[:32], nil
+		sessionKey := make([]byte, sessionKeySize)
+		copy(sessionKey, dhKey[33:64])
+		return sessionKey, nil
 	}
 
 	// If it isn't, we append 0x00 bytes to extend it to 32 bytes in length
@@ -62,9 +66,18 @@ func macKeyFromDHKey(dhKey []byte) ([]byte, error) {
 		return nil, errors.New("dhKey length is 0: cannot proceed")
 	}
 
+	// If the most significant bit is 1, we prepend a 0x00 byte
+	// Note: the append here is acceptable as the main slice is created on the spot ([]byte{0x00})
+	// and the assignement doesn't change the underlying array
+	if dhKey[0]&0x80 != 0 {
+		dhKey = append([]byte{0x00}, dhKey...)
+	}
+
 	// If that byte array is greater than or equal to 64 bytes, the MAC key is bytes 33-64 from that byte array.
 	if len(dhKey) >= 64 {
-		return dhKey[33:64], nil
+		macKey := make([]byte, macKeySize)
+		copy(macKey, dhKey[33:64])
+		return macKey, nil
 	}
 
 	// Else, we take the SHA-256 Hash of the dhKey
