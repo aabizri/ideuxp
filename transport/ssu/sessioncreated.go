@@ -1,13 +1,20 @@
 package ssu
 
 import (
+	"bytes"
+	"crypto/rand"
+	"crypto/sha1"
 	"encoding/binary"
-	"errors"
+	"io"
 	"net"
+	"time"
+
+	"errors"
 )
 
 const (
-	reasonableMaxSessionCreatedPayloadSize = 400
+	reasonableMaxSCSize = 400
+	minSCSize           = 256 + 1 + 16 + 2 + 4 + 4 // + signature ?
 )
 
 type sessionCreated struct {
@@ -25,10 +32,38 @@ type sessionCreated struct {
 	MyAddr net.UDPAddr
 
 	// SessionKey to encrypt the signature
-
 	RemoteIntroKey []byte
 }
 
+/* MarshalBinary marshals a sessionCreated to binary form
+
++----+----+----+----+----+----+----+----+
+|         Y, as calculated from DH      |
+~                .  .  .                ~
+|                                       |
++----+----+----+----+----+----+----+----+
+|size| that many byte IP address (4-16) |
++----+----+----+----+----+----+----+----+
+| Port (A)| public relay tag  |  signed
++----+----+----+----+----+----+----+----+
+  on time |                             |
++----+----+                             +
+|                                       |
++                                       +
+|             signature                 |
++                                       +
+|                                       |
++                                       +
+|                                       |
++         +----+----+----+----+----+----+
+|         |   (0-15 bytes of padding)
++----+----+----+----+----+----+----+----+
+          |                             |
++----+----+                             +
+|           arbitrary amount            |
+~        of uninterpreted data          ~
+~                .  .  .                ~
+*/
 func (sc *sessionCreated) MarshalBinary() ([]byte, error) {
 	// Sanity check for sessionCreated
 	if len(sc.Addr.IP) != 4 && len(sc.Addr.IP) != 16 {
@@ -37,34 +72,95 @@ func (sc *sessionCreated) MarshalBinary() ([]byte, error) {
 		return nil, errors.New("port overflows uint16: cannot represent it in two bytes")
 	}
 
-	// Create the byte slice we will return
-	b := make([]byte, 0, 400)
+	// Create the bytes buffer we will use
+	buf := bytes.NewBuffer(make([]byte, 0, reasonableMaxSCSize))
 
 	// First we copy the Y
-	copy(b[:256], sc.Y[:])
+	buf.Write(sc.Y[:])
 
 	// Write the size of the IP Addr
-	b[256] = byte(len(sc.Addr.IP))
+	buf.Write([]byte{byte(len(sc.Addr.IP))})
 
 	// Write the IP addr
-	cursor := 257 + len(sc.Addr.IP)
-	copy(b[257:cursor], sc.Addr.IP)
+	buf.Write(sc.Addr.IP)
 
 	// Write the port number (2 byte long)
-	binary.BigEndian.PutUint16(b[cursor:cursor+2], uint16(sc.Addr.Port))
-	cursor += 2
+	binary.Write(buf, binary.BigEndian, uint16(sc.Addr.Port))
 
 	// Write the public relay tag
-	copy(b[cursor:cursor+4], sc.RelayTag[:])
-	cursor += 4
+	buf.Write(sc.RelayTag[:])
 
 	// Create the signature
-	// TODO
-	// X + Y + Alice's IP + Alice's port + Bob's IP + Bob's port + Alice's new relay tag + Bob's signed on time (We are bob, remote is alice)
+
+	// First we hash it all
+	t := time.Now()
+	hash := sessionCreatedHash(&sc.X, &sc.Y, sc.Addr.IP, uint16(sc.Addr.Port), sc.MyAddr.IP, uint16(sc.MyAddr.Port), &sc.RelayTag, t)
+
+	// Then we sign
+	signed := sessionCreatedSign(hash, make([]byte, 4)) //TODO HASH
 
 	// If the signature length is not a multiple of 16, pad it until it is.
-	// Then, we encrypt it using the correct session key
-	// TODO
+	padLen := 16 - (1 + 4 + len(signed)%16)
+	if padLen == 16 {
+		padLen = 0
+	}
+	n, err := io.CopyN(buf, rand.Reader, int64(padLen))
+	if err != nil {
+		return nil, err
+	}
+	if n != int64(padLen) {
+		return nil, errors.New("didn't read the exact amount of random padding into sc buffer")
+	}
 
-	return b, errors.New("WIP")
+	// Extract the bytes and push the buf back to the global pool
+	b := buf.Bytes()
+	buf.Reset()
+
+	// done
+	return b, errors.New("Not completely implemented")
+}
+
+func sessionCreatedHash(X *[256]byte, Y *[256]byte, reqIP net.IP, reqPort uint16, respIP net.IP, respPort uint16, relayTag *[4]byte, time time.Time) []byte {
+	// X + Y + Alice's IP + Alice's port + Bob's IP + Bob's port + Alice's new relay tag + Bob's signed on time (We are bob, remote is alice)
+	// This is DSA-SHA1, so we must first hash that data, and then sign it
+
+	// Let's create the hasher
+	hasher := sha1.New()
+
+	// Let's establish the time
+	timeU := uint32(time.Unix())
+
+	// Copy X
+	hasher.Write(X[:])
+
+	// Copy Y
+	hasher.Write(Y[:])
+
+	// Copy reqIP
+	hasher.Write(reqIP)
+
+	// Copy reqPort
+	binary.Write(hasher, binary.BigEndian, reqPort)
+
+	// Copy respIP
+	hasher.Write(respIP)
+
+	// Copy respPort
+	binary.Write(hasher, binary.BigEndian, respPort)
+
+	// Copy relay tag
+	hasher.Write(relayTag[:])
+
+	// Copy time (uint32 = 4 bytes)
+	binary.Write(hasher, binary.BigEndian, timeU)
+
+	// Sum it
+	sum := hasher.Sum(nil)
+
+	// Return
+	return sum
+}
+
+func sessionCreatedSign(hashed []byte, privKey []byte) []byte {
+	return nil
 }
