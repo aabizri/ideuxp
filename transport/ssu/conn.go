@@ -100,7 +100,7 @@ func (d *Dialer) Dial(ctx context.Context, peer *net.UDPAddr, introkey []byte) (
    Data <---------------------------> Data
 
 */
-func (d *Dialer) DialOverConn(ctx context.Context, udp net.Conn, introkey []byte, ip net.IP) (*Conn, error) {
+func (d *Dialer) DialOverConn(ctx context.Context, udp net.Conn, introKey []byte, ip net.IP) (*Conn, error) {
 
 	// STEP 1: Session Request
 
@@ -122,14 +122,12 @@ func (d *Dialer) DialOverConn(ctx context.Context, udp net.Conn, introkey []byte
 	}
 	// Embed it into a datagram
 	srd := &datagram{
-		MACKey:  introkey,
-		EncKey:  introkey,
 		Flag:    composeFlag(payloadSessionRequest, false, false),
 		Time:    uint32(time.Now().Unix()),
 		Payload: srb,
 	}
 	// Marshal the datagram
-	srdb, err := srd.MarshalBinary()
+	srdb, err := srd.MarshalBinary(introKey, introKey)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +137,7 @@ func (d *Dialer) DialOverConn(ctx context.Context, udp net.Conn, introkey []byte
 		return nil, err
 	}
 
-	// Receive a Session Created or nothing
+	// STEP 2: Receive a Session Created or wait for answer
 	//_, err := udp.Read()
 	// dh.NewPublicKey(decryptedSessionCreated.Y[:])
 
