@@ -70,6 +70,9 @@ func (conn *Conn) SetWriteDeadline(t time.Time) error { return nil }
 
 // A Dialer contains options for connecting to a remote peer
 type Dialer struct {
+	SigningPubKey  []byte
+	SigningPrivKey []byte
+	Introkey       []byte
 }
 
 // Dial does a direct dial
